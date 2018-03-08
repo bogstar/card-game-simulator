@@ -1,0 +1,187 @@
+﻿using System.Collections;
+using System.Collections.Generic;
+using UnityEngine;
+using UnityEngine.UI;
+
+public class Player : HealthEntity
+{
+	public GameObject cardBar;
+	public Text nameBar;
+	public Button targetButton;
+	public GameObject armorImage;
+	public Text armorText;
+	public Image healthBar;
+	public Text healthTextual;
+	public float healthBarWidth = 165;
+	public RectTransform manaBar;
+	public Text manaTextual;
+	public float manaBarWidth = 165;
+	public Color armoredColorHealthBar;
+	public Color healthBarColor;
+
+	public int mana;
+	public int maxMana;
+
+	public int strength;
+
+	public List<Card> cards = new List<Card>();
+
+	public List<CardGameObject> cardsInHand = new List<CardGameObject>();
+
+	GameManager gameManager;
+
+
+	void Awake()
+	{
+		gameManager = FindObjectOfType<GameManager>();
+	}
+
+	public void DrawRandomCard(int amount)
+	{
+		for (int i = 0; i < amount; i++)
+		{
+			int randomCardIndex = Random.Range(0, cards.Count);
+			Card cardToDraw = cards[randomCardIndex];
+
+			DrawCard(cardToDraw);
+		}
+	}
+
+	public void AllowTargetable(bool allow)
+	{
+		targetButton.gameObject.SetActive(allow);
+	}
+
+	public void ExpandContentWindow()
+	{
+		((RectTransform)cardBar.transform).sizeDelta = new Vector2(268, (Mathf.Clamp(cardsInHand.Count - 1, 0, cardsInHand.Count) / 3) * 120 + 120);
+	}
+
+	void DrawCard(Card card)
+	{
+		GameObject newCardGO = GameObject.Instantiate(gameManager.cardPrefab, cardBar.transform);
+		CardGameObject newCard = newCardGO.GetComponent<CardGameObject>();
+
+		cardsInHand.Add(newCard);
+
+		newCard.card = card;
+		newCard.cardName.text = card.name;
+		newCard.cardDesc.text = card.description;
+		newCard.cardMana.text = card.manaCost.ToString();
+		newCard.cardPict.sprite = card.picture;
+		newCard.cardType.text = card.type.ToString();
+		newCard.cardButton.GetComponent<Button>().onClick.AddListener(delegate { FindObjectOfType<BattleManager>().SelectCard(newCard, this); });
+
+		ExpandContentWindow();
+	}
+
+	public void UpdateUI()
+	{
+		if(armor > 0)
+		{
+			armorImage.SetActive(true);
+			healthBar.color = armoredColorHealthBar;
+			armorText.text = armor.ToString();
+		}
+		else
+		{
+			armorImage.SetActive(false);
+			healthBar.color = healthBarColor;
+		}
+
+		float healthPercentage = (health / (float)maxHealth) * healthBarWidth;
+		healthBar.rectTransform.sizeDelta = new Vector2(healthPercentage, healthBar.rectTransform.sizeDelta.y);
+		healthTextual.text = health + "/" + maxHealth;
+		float manaPercentage = (mana / (float)maxMana) * manaBarWidth;
+		manaPercentage = Mathf.Clamp(manaPercentage, 0, manaBarWidth);
+		manaBar.sizeDelta = new Vector2(manaPercentage, manaBar.sizeDelta.y);
+		manaTextual.text = mana + "/" + maxMana;
+		nameBar.text = name;
+	}
+
+	public void DropCard(CardGameObject card)
+	{
+		cardsInHand.Remove(card);
+		GameObject.Destroy(card.gameObject);
+		ExpandContentWindow();
+	}
+
+	public void DropAllCards()
+	{
+		for (int i = cardsInHand.Count - 1; i > -1; i--)
+		{
+			DropCard(cardsInHand[i]);
+		}
+	}
+
+	public override void ModifyArmor(int amount)
+	{
+		armor += amount;
+		armor = Mathf.Clamp(armor, 0, armor);
+
+		UpdateUI();
+	}
+
+	public override Enemy.DamageInfo TakeDamage(int amount)
+	{
+		amount = Mathf.Clamp(amount, 0, amount);
+
+		int amountRemaining = amount;
+
+		amountRemaining -= armor;
+		ModifyArmor(-amount);
+
+		amountRemaining = Mathf.Clamp(amountRemaining, 0, amountRemaining);
+
+		if(amountRemaining > 0)
+		{
+			health -= amountRemaining;
+			health = Mathf.Clamp(health, 0, maxHealth);
+		}
+
+		if(health <= 0)
+		{
+			FindObjectOfType<BattleManager>().Defeat();
+		}
+
+		UpdateUI();
+
+		return default(Enemy.DamageInfo);
+	}
+
+	public override void TakeHealing(int amount)
+	{
+		amount = Mathf.Clamp(amount, 0, amount);
+
+		health += amount;
+		health = Mathf.Clamp(health, 0, maxHealth);
+
+		UpdateUI();
+	}
+
+	public void ModifyMana(int amount)
+	{
+		mana += amount;
+
+		UpdateUI();
+	}
+
+	public void ResetMaxMana()
+	{
+		mana = maxMana;
+
+		UpdateUI();
+	}
+
+	public override void ResetArmor()
+	{
+		armor = 0;
+
+		UpdateUI();
+	}
+
+	public override void ShowTargetButton()
+	{
+		AllowTargetable(true);
+	}
+}

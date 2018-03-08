@@ -1,0 +1,434 @@
+﻿#if UNITY_EDITOR
+using System.Collections;
+using System.Collections.Generic;
+using UnityEngine;
+using UnityEditor;
+using System.Linq;
+using System.Linq.Expressions;
+
+public class CardAddingSystem : EditorWindow
+{
+	List<ScriptableObject> scriptableobjects;
+
+	string cardsPath = FileManager.AssetsPath + FileManager.DirectorySeparatorChar + FileManager.CardsPath;
+	char symbol = FileManager.SeparatorChar; 
+
+	string cardName;
+	Sprite cardImage;
+	string cardDescription;
+	CardScriptableObject.Type cardType;
+	CardScriptableObject.Rarity cardRarity;
+	Dictionary<int, int> values;
+	int valuesCount;
+	string cardCost;
+	Vector2 scrollPosition;
+	bool foldout;
+	bool attributesB;
+	CardScriptableObject currentCard;
+
+	public Attribute[] attributes = new Attribute[0];
+	int currentAttributeCount;
+	int lastAttributeCount;
+
+	Card_AttributeBase[] atts = new Card_AttributeBase[0];
+
+	State state = State.Adding;
+
+	int numberOfFields;
+
+
+	void OnEnable()
+	{
+		minSize = new Vector2(100, 100);
+		titleContent.text = "Card Adding System";
+		scriptableobjects = new List<ScriptableObject>();
+	}
+
+	//[MenuItem("Window/Card Adding System")]
+	static void Init()
+	{
+		EditorWindow.GetWindow<CardAddingSystem>();
+	}
+
+	void OnGUI()
+	{
+		if (state == State.None)
+		{
+			if (GUILayout.Button("Add new card"))
+			{
+				state = State.Adding;
+			}
+
+			scriptableobjects = new List<ScriptableObject>();
+			string[] ss = AssetDatabase.FindAssets("", new string[] { "Assets/Cards" });
+			for (int i = 0; i < ss.Length; i++)
+			{
+				string path = AssetDatabase.GUIDToAssetPath(ss[i]);
+				scriptableobjects.Add(EditorGUIUtility.Load(path) as ScriptableObject);
+			}
+
+			int size = 75;
+
+			int maxPerRow = (int)position.width / (size + 5);
+			int currPerRow = maxPerRow;
+
+			scrollPosition = EditorGUILayout.BeginScrollView(scrollPosition);
+
+			foreach (ScriptableObject so in scriptableobjects)
+			{
+				if(currPerRow >= maxPerRow)
+				{
+					EditorGUILayout.BeginHorizontal();
+					currPerRow = 0;
+				}
+
+				if (GUILayout.Button(so.name, GUILayout.Width(size), GUILayout.Height(size)))
+				{
+					currentCard = so as CardScriptableObject;
+					cardName = currentCard.name;
+					cardImage = currentCard.picture;
+					cardDescription = currentCard.description;
+					cardType = currentCard.type;
+					cardRarity = currentCard.rarity;
+					cardCost = currentCard.manaCost.ToString();
+					state = State.Changing;
+				}
+				currPerRow++;
+
+				if (currPerRow >= maxPerRow)
+				{
+					EditorGUILayout.EndHorizontal();
+				}
+			}
+
+			EditorGUILayout.EndScrollView();
+		}
+		else if(state == State.Adding)
+		{
+			if (GUILayout.Button("Back"))
+			{
+				state = State.None;
+			}
+
+			GUILayout.Label("Base Settings", EditorStyles.boldLabel);
+			cardName = EditorGUILayout.TextField("Card Name", cardName);
+			cardImage = EditorGUILayout.ObjectField("Card Image", cardImage, typeof(Sprite), false) as Sprite;
+			GUILayout.Label("Card Description (Use " + symbol + "num" + symbol + " formatting for inserting values. Example: " + symbol + "1" + symbol + ", " + symbol + "4" + symbol + ")");
+
+			EditorStyles.textField.wordWrap = true;
+			cardDescription = EditorGUILayout.TextArea(cardDescription, GUILayout.Height(42));
+			EditorStyles.textField.wordWrap = false;
+
+			GUILayout.Label("This is how the card description will look like.");
+
+			List<int> values2 = GetValues(cardDescription);
+
+			if (values2.Count != valuesCount)
+			{
+				valuesCount = values2.Count;
+				values = new Dictionary<int, int>();
+
+				foreach (int v in values2)
+				{
+					values.Add(v, 0);
+				}
+			}
+
+			string s = GetString(cardDescription, values);
+			EditorStyles.textField.wordWrap = true;
+			GUI.enabled = false;
+			EditorGUILayout.TextArea(s, GUILayout.Height(42));
+			GUI.enabled = true;
+			EditorStyles.textField.wordWrap = false;
+			/*
+			if(valuesCount > 0)
+			{*/
+				foldout = EditorGUILayout.Foldout(foldout, "Variables");
+			//}
+
+			if (foldout)
+			{
+
+
+				for (int i = 0; i < numberOfFields; i++)
+				{
+					EditorGUILayout.TextField("Var " + (i+1), "0");
+				}
+				/*
+				foreach (int v in values2)
+				{
+					int a;
+					if (int.TryParse(EditorGUILayout.TextField(v.ToString(), values[v].ToString()), out a))
+						values[v] = a;
+				}*/
+			}
+
+			cardRarity = (CardScriptableObject.Rarity)EditorGUILayout.EnumPopup("Card Rarity", cardRarity);
+			cardCost = EditorGUILayout.TextField("Mana Cost", cardCost);
+			cardType = (CardScriptableObject.Type)EditorGUILayout.EnumPopup("Card Type", cardType);
+
+			ScriptableObject target = this;
+			SerializedObject so = new SerializedObject(target);
+			SerializedProperty stringsProperty = so.FindProperty("attributes");
+
+			EditorGUILayout.PropertyField(stringsProperty, true);
+			so.ApplyModifiedProperties();
+
+			currentAttributeCount = attributes.Length;
+			if(lastAttributeCount != currentAttributeCount)
+			{
+				atts = new Card_AttributeBase[currentAttributeCount];
+			}
+
+			EditorGUILayout.Space();
+
+			numberOfFields = 0;
+
+			for (int i = 0; i < currentAttributeCount; i++)
+			{
+				switch (attributes[i])
+				{
+					case Attribute.Target:
+						{
+							if (atts[i] == null || !(atts[i] is Card_AttributeTargetable))
+								atts[i] = ScriptableObject.CreateInstance<Card_AttributeTargetable>();
+							Card_AttributeTargetable c = (Card_AttributeTargetable)atts[i];
+							c.ally = GUILayout.Toggle(c.ally, "Ally");
+							c.enemy = GUILayout.Toggle(c.enemy, "Enemy");
+							c.self = GUILayout.Toggle(c.self, "Self");
+							c.multipleTargets = GUILayout.Toggle(c.multipleTargets, "Multiple Targets");
+							c.type = (Card_AttributeTargetable.Type)EditorGUILayout.EnumPopup("Type", c.type);
+							c.amount = EditorGUILayout.IntField("Amount", c.amount);
+							break;
+						}
+					case Attribute.DrawCard:
+						{
+							if (atts[i] == null || !(atts[i] is Card_AttributeDrawCard))
+								atts[i] = ScriptableObject.CreateInstance<Card_AttributeDrawCard>();
+							Card_AttributeDrawCard c = (Card_AttributeDrawCard)atts[i];
+							c.amount = EditorGUILayout.IntField("Amount", c.amount);
+							break;
+						}
+				}
+				EditorGUILayout.Space();
+			}
+
+			lastAttributeCount = currentAttributeCount;
+
+			if (GUILayout.Button("Save"))
+			{
+				CardScriptableObject card = ScriptableObject.CreateInstance<CardScriptableObject>();
+				card.name = cardName;
+				card.description = cardDescription;
+				int.TryParse(cardCost, out card.manaCost);
+				card.type = cardType;
+				card.rarity = cardRarity;
+				card.picture = cardImage;
+				card.attributes = new Card_AttributeBase[currentAttributeCount];
+
+				AssetDatabase.CreateFolder("Assets/Cards", card.name);
+
+				card.attributes = new Card_AttributeBase[currentAttributeCount];
+
+				for (int i = 0; i < atts.Length; i++)
+				{
+					AssetDatabase.CreateAsset(atts[i], AssetDatabase.GenerateUniqueAssetPath("Assets/Cards/" + cardName + "/attribute_" + i.ToString() + ".asset"));
+					card.attributes[i] = atts[i];
+				}
+
+				AssetDatabase.CreateAsset(card, AssetDatabase.GenerateUniqueAssetPath("Assets/Cards/" + cardName + "/" + cardName + ".asset"));
+				/*
+				state = State.None;
+				cardName = "";
+				cardImage = null;
+				cardDescription = "";
+				cardType = CardScriptableObject.Type.Attack;
+				cardRarity = CardScriptableObject.Rarity.Common;
+				cardCost = "";
+				card.attributes = new Card_AttributeBase[0];
+
+				GUI.FocusControl("");*/
+			}
+		}
+		else if (state == State.Changing)
+		{
+			if (GUILayout.Button("Back"))
+			{
+				state = State.None;
+				cardName = "";
+				cardImage = null;
+				cardDescription = "";
+				cardType = CardScriptableObject.Type.Attack;
+				cardRarity = CardScriptableObject.Rarity.Common;
+				cardCost = "";
+
+				currentCard = null;
+
+				GUI.FocusControl("");
+			}
+
+			GUILayout.Label("Base Settings", EditorStyles.boldLabel);
+			cardName = EditorGUILayout.TextField("Card Name", cardName);
+			cardImage = EditorGUILayout.ObjectField("Card Image", cardImage, typeof(Sprite), false) as Sprite;
+			GUILayout.Label("Card Description (Use " + symbol + "num" + symbol + " formatting for inserting values. Example: " + symbol + "1" + symbol + ", " + symbol + "4" + symbol + ")");
+
+			EditorStyles.textField.wordWrap = true;
+			cardDescription = EditorGUILayout.TextArea(cardDescription, GUILayout.Height(42));
+			EditorStyles.textField.wordWrap = false;
+
+			GUILayout.Label("This is how the card description will look like.");
+
+			List<int> values2 = GetValues(cardDescription);
+
+			if (values2.Count != valuesCount)
+			{
+				valuesCount = values2.Count;
+				values = new Dictionary<int, int>();
+
+				foreach (int v in values2)
+				{
+					values.Add(v, 0);
+				}
+			}
+
+			string s = GetString(cardDescription, values);
+			EditorStyles.textField.wordWrap = true;
+			GUI.enabled = false;
+			EditorGUILayout.TextArea(s, GUILayout.Height(42));
+			GUI.enabled = true;
+			EditorStyles.textField.wordWrap = false;
+
+			if (valuesCount > 0)
+			{
+				foldout = EditorGUILayout.Foldout(foldout, "Variables");
+			}
+
+			if (foldout)
+			{
+				foreach (int v in values2)
+				{
+					int a;
+					if (int.TryParse(EditorGUILayout.TextField(v.ToString(), values[v].ToString()), out a))
+						values[v] = a;
+				}
+			}
+
+			cardType = (CardScriptableObject.Type)EditorGUILayout.EnumPopup("Card Type", cardType);
+			cardRarity = (CardScriptableObject.Rarity)EditorGUILayout.EnumPopup("Card Rarity", cardRarity);
+			cardCost = EditorGUILayout.TextField("Mana Cost", cardCost);
+
+			if (GUILayout.Button("Save"))
+			{
+				AssetDatabase.DeleteAsset("Assets/Cards/" + currentCard.name + ".asset");
+				CardScriptableObject card = ScriptableObject.CreateInstance<CardScriptableObject>();
+				card.name = cardName;
+				card.description = cardDescription;
+				int.TryParse(cardCost, out card.manaCost);
+				card.type = cardType;
+				card.rarity = cardRarity;
+				card.picture = cardImage;
+				//card.values = values;
+
+				AssetDatabase.CreateAsset(card, AssetDatabase.GenerateUniqueAssetPath("Assets/Cards/" + cardName + ".asset"));
+
+				state = State.None;
+				cardName = "";
+				cardImage = null;
+				cardDescription = "";
+				cardType = CardScriptableObject.Type.Attack;
+				cardRarity = CardScriptableObject.Rarity.Common;
+				cardCost = "";
+
+				GUI.FocusControl("");
+			}
+
+			if (GUILayout.Button("Delete"))
+			{
+				AssetDatabase.DeleteAsset("Assets/Cards/" + currentCard.name + ".asset");
+
+				state = State.None;
+				cardName = "";
+				cardImage = null;
+				cardDescription = "";
+				cardType = CardScriptableObject.Type.Attack;
+				cardRarity = CardScriptableObject.Rarity.Common;
+				cardCost = "";
+
+				GUI.FocusControl("");
+			}
+		}
+	}
+
+	string GetString(string text, Dictionary<int, int> values)
+	{
+		string finalString = "";
+
+		if (text == null)
+		{
+			return "";
+		}
+
+		string[] s = text.Split(symbol);
+
+		if (s.Length == 0 || s.Length % 2 == 0)
+		{
+			return text;
+		}
+
+		for (int i = 0; i < s.Length; i++)
+		{
+			if (i % 2 == 0)
+			{
+				finalString += s[i];
+			}
+			else
+			{
+				finalString += values[int.Parse(s[i])];
+			}
+		}
+
+		return finalString;
+	}
+
+	List<int> GetValues(string text)
+	{
+		if(text == null)
+		{
+			return new List<int>();
+		}
+
+		List<int> values = new List<int>();
+		string[] s = text.Split(symbol);
+
+		if(s.Length == 0 || s.Length % 2 == 0)
+		{
+			return new List<int>();
+		}
+		
+		for (int i = 1; i < s.Length; i+=2)
+		{
+			int parsedNumber;
+
+			if(!int.TryParse(s[i], out parsedNumber) || values.Contains(parsedNumber))
+			{
+				return new List<int>();
+			}
+
+			values.Add(parsedNumber);
+		}
+
+		return values;
+	}
+
+	public static string GetMemberName<T>(Expression<System.Func<T>> memberExpression)
+	{
+		MemberExpression expressionBody = (MemberExpression)memberExpression.Body;
+		return expressionBody.Member.Name;
+	}
+
+	enum State { None, Adding, Changing };
+
+	public enum Attribute { None, DrawCard, Target };
+}
+
+#endif
